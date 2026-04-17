@@ -25,6 +25,7 @@ SUPPORTED_HF_MODELS = {
     },
     "tiiuae/Falcon3-7B-1.58bit": {
         "model_name": "Falcon3-7B-1.58bit",
+        "download_repo": "tiiuae/Falcon3-7B-Instruct-1.58bit-GGUF",
     },
     "tiiuae/Falcon3-10B-Instruct-1.58bit": {
         "model_name": "Falcon3-10B-Instruct-1.58bit",
@@ -43,6 +44,7 @@ SUPPORTED_HF_MODELS = {
     },
     "microsoft/BitNet-b1.58-2B-4T": {
         "model_name": "BitNet-b1.58-2B-4T",
+        "download_repo": "microsoft/BitNet-b1.58-2B-4T-gguf",
     },
     "tiiuae/Falcon-E-3B-Instruct": {
         "model_name": "Falcon-E-3B-Instruct",
@@ -56,6 +58,11 @@ SUPPORTED_HF_MODELS = {
     "tiiuae/Falcon-E-1B-Base": {
         "model_name": "Falcon-E-1B-Base",
     },
+}
+
+MODEL_NAME_TO_HF_REPO = {
+    spec["model_name"]: hf_repo
+    for hf_repo, spec in SUPPORTED_HF_MODELS.items()
 }
 
 SUPPORTED_QUANT_TYPES = {
@@ -89,6 +96,28 @@ def get_model_name():
         return SUPPORTED_HF_MODELS[args.hf_repo]["model_name"]
     return os.path.basename(os.path.normpath(args.model_dir))
 
+def resolve_download_tool():
+    hf_cli = shutil.which("hf")
+    if hf_cli:
+        return [hf_cli, "download"]
+
+    legacy_cli = shutil.which("huggingface-cli")
+    if legacy_cli:
+        return [legacy_cli, "download"]
+
+    logging.error("Neither 'hf' nor 'huggingface-cli' is available. Please install the Hugging Face CLI first.")
+    sys.exit(1)
+
+def normalize_model_dir(base_dir, model_name):
+    model_path = Path(base_dir)
+    if model_path.name == model_name:
+        return str(model_path)
+    return str(model_path / model_name)
+
+def infer_hf_repo_from_model_dir(model_dir):
+    model_name = os.path.basename(os.path.normpath(model_dir))
+    return MODEL_NAME_TO_HF_REPO.get(model_name)
+
 def run_command(command, shell=False, log_step=None):
     """Run a system command and ensure it succeeds."""
     if log_step:
@@ -112,12 +141,23 @@ def prepare_model():
     model_dir = args.model_dir
     quant_type = args.quant_type
     quant_embd = args.quant_embd
+    if hf_url is None and not os.path.exists(model_dir):
+        inferred_hf_repo = infer_hf_repo_from_model_dir(model_dir)
+        if inferred_hf_repo is not None:
+            hf_url = inferred_hf_repo
+            logging.info(f"Model directory {model_dir} is missing. Auto-resolving to Hugging Face repo {hf_url}.")
+
     if hf_url is not None:
-        # download the model
-        model_dir = os.path.join(model_dir, SUPPORTED_HF_MODELS[hf_url]["model_name"])
+        model_spec = SUPPORTED_HF_MODELS[hf_url]
+        model_dir = normalize_model_dir(model_dir, model_spec["model_name"])
         Path(model_dir).mkdir(parents=True, exist_ok=True)
-        logging.info(f"Downloading model {hf_url} from HuggingFace to {model_dir}...")
-        run_command(["huggingface-cli", "download", hf_url, "--local-dir", model_dir], log_step="download_model")
+
+        if not any(Path(model_dir).iterdir()):
+            download_repo = model_spec.get("download_repo", hf_url)
+            logging.info(f"Downloading model {download_repo} from Hugging Face to {model_dir}...")
+            run_command([*resolve_download_tool(), download_repo, "--local-dir", model_dir], log_step="download_model")
+        else:
+            logging.info(f"Model directory {model_dir} already exists; skipping download.")
     elif not os.path.exists(model_dir):
         logging.error(f"Model directory {model_dir} does not exist.")
         sys.exit(1)

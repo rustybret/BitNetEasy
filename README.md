@@ -194,8 +194,11 @@ pip install -r requirements.txt
 3. Build the project
 ```bash
 # Manually download the model and run with local path
-huggingface-cli download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir models/BitNet-b1.58-2B-4T
+hf download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir models/BitNet-b1.58-2B-4T
 python setup_env.py -md models/BitNet-b1.58-2B-4T -q i2_s
+
+# Additional supported GGUF option
+hf download tiiuae/Falcon3-7B-Instruct-1.58bit-GGUF --local-dir models/Falcon3-7B-1.58bit
 
 ```
 <pre>
@@ -222,6 +225,16 @@ optional arguments:
 ```bash
 # Run inference with the quantized model
 python run_inference.py -m models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf -p "You are a helpful assistant" -cnv
+
+# Or run Falcon3 from its local GGUF directory
+python run_inference.py -m models/Falcon3-7B-1.58bit/ggml-model-i2_s.gguf -p "You are a helpful assistant" -cnv
+
+# Helper script with model aliases
+./run_bitnet_2b.sh --model 2b "You are a helpful assistant"
+./run_bitnet_2b.sh --model falcon3 "You are a helpful assistant"
+
+# If either helper model is missing locally, the helper will call setup_env.py
+# to download and prepare it automatically.
 ```
 <pre>
 usage: run_inference.py [-h] [-m MODEL] [-n N_PREDICT] -p PROMPT [-t THREADS] [-c CTX_SIZE] [-temp TEMPERATURE] [-cnv]

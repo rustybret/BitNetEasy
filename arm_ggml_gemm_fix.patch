@@ -1,0 +1,11 @@
+--- 3rdparty/llama.cpp/ggml/src/ggml.c
++++ 3rdparty/llama.cpp/ggml/src/ggml.c
+@@ -13258,7 +13258,7 @@
+                 }
+             }
+         } else {
+-            if (gemm && (ne11 > 3)) {
++            if (false) {
+                 if (src0->type == GGML_TYPE_I2_S) {
+                     float tmp[(src0_end - src0_start)*(ne11 - ne11 % 4)];
+                     const float * scale      = (float * )((uint8_t*) (src0->data) + (ne00 * ne01 / 4));
