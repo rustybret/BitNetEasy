@@ -146,21 +146,51 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
         <td>&#9989;</td>
         <td>&#10060;</td>
     </tr>
-    <tr>
-        <td rowspan="2"><a href="https://huggingface.co/collections/tiiuae/falcon-edge-series-6804fd13344d6d8a8fa71130">Falcon-E Family</a></td>
-        <td rowspan="2">1B-3B</td>
-        <td>x86</td>
-        <td>&#9989;</td>
-        <td>&#10060;</td>
-        <td>&#9989;</td>
-        <td rowspan="2"><a href="./gpu/metal_kernels/README.md">Metal</a></td>
-    </tr>
-    <tr>
-        <td>ARM</td>
-        <td>&#9989;</td>
-        <td>&#9989;</td>
-        <td>&#10060;</td>
-    </tr>
+<tr>
+<td rowspan="2"><a href="https://huggingface.co/collections/tiiuae/falcon-edge-series-6804fd13344d6d8a8fa71130">Falcon-E Family</a></td>
+<td rowspan="2">1B-3B</td>
+<td>x86</td>
+<td>&#9989;</td>
+<td>&#10060;</td>
+<td>&#9989;</td>
+<td rowspan="2"><a href="./gpu/metal_kernels/README.md">Metal</a></td>
+</tr>
+<tr>
+<td>ARM</td>
+<td>&#9989;</td>
+<td>&#9989;</td>
+<td>&#10060;</td>
+</tr>
+<tr>
+<td rowspan="2"><a href="https://huggingface.co/tiiuae/Falcon3-1B-1.58bit">Falcon3-1B-1.58bit</a></td>
+<td rowspan="2">1.0B</td>
+<td>x86</td>
+<td>&#9989;</td>
+<td>&#10060;</td>
+<td>&#9989;</td>
+<td rowspan="2"><a href="./gpu/README.md">CUDA</a>, <a href="./gpu/metal_kernels/README.md">Metal</a></td>
+</tr>
+<tr>
+<td>ARM</td>
+<td>&#9989;</td>
+<td>&#9989;</td>
+<td>&#10060;</td>
+</tr>
+<tr>
+<td rowspan="2"><a href="https://huggingface.co/jpacifico/Aramis-2B-BitNet-b1.58-i2s-GGUF">Aramis-2B-BitNet-b1.58-i2s-GGUF</a></td>
+<td rowspan="2">2.0B</td>
+<td>x86</td>
+<td>&#9989;</td>
+<td>&#10060;</td>
+<td>&#9989;</td>
+<td rowspan="2"><a href="./gpu/README.md">CUDA</a>, <a href="./gpu/metal_kernels/README.md">Metal</a></td>
+</tr>
+<tr>
+<td>ARM</td>
+<td>&#9989;</td>
+<td>&#9989;</td>
+<td>&#10060;</td>
+</tr>
 </table>
 
 

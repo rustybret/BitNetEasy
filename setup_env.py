@@ -11,6 +11,9 @@ from pathlib import Path
 logger = logging.getLogger("setup_env")
 
 SUPPORTED_HF_MODELS = {
+    "jpacifico/Aramis-2B-BitNet-b1.58-i2s-GGUF": {
+        "model_name": "Aramis-2B-BitNet-b1.58-i2s-GGUF",
+    },
     "1bitLLM/bitnet_b1_58-large": {
         "model_name": "bitnet_b1_58-large",
     },
@@ -41,6 +44,9 @@ SUPPORTED_HF_MODELS = {
     },
     "tiiuae/Falcon3-1B-Instruct-1.58bit": {
         "model_name": "Falcon3-1B-Instruct-1.58bit",
+    },
+    "tiiuae/Falcon3-1B-1.58bit": {
+        "model_name": "Falcon3-1B-1.58bit",
     },
     "microsoft/BitNet-b1.58-2B-4T": {
         "model_name": "BitNet-b1.58-2B-4T",
