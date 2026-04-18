@@ -6,6 +6,7 @@
 #include <torch/extension.h>
 #include <vector>
 #include <cstring>
+#include <dlfcn.h>
 
 // Metal device and pipeline state
 static id<MTLDevice> g_device = nil;
@@ -19,33 +20,46 @@ static id<MTLComputePipelineState> g_quantizePipeline = nil;
 // Initialize Metal
 bool metal_init() {
     if (g_device != nil) return true;
-    
-    // Get default Metal device
+
     g_device = MTLCreateSystemDefaultDevice();
     if (g_device == nil) return false;
-    
-    // Create command queue
+
     g_commandQueue = [g_device newCommandQueue];
-    
-    // Load Metal library from default shader file
+
     NSError* error = nil;
-    NSString* shaderPath = [[NSBundle mainBundle] pathForResource:@"bitnet_kernels" ofType:@"metallib"];
-    
-    if (shaderPath == nil) {
-        // Try to compile from source
-        NSString* sourcePath = [[NSBundle mainBundle] pathForResource:@"bitnet_kernels" ofType:@"metal"];
-        if (sourcePath != nil) {
-            NSString* source = [NSString stringWithContentsOfFile:sourcePath encoding:NSUTF8StringEncoding error:&error];
-            if (source != nil) {
-                g_library = [g_device newLibraryWithSource:source options:nil error:&error];
+    g_library = nil;
+
+    // Use dladdr to find the .so's directory and locate shader files next to it.
+    // NSBundle mainBundle refers to the Python process bundle which does not
+    // contain our Metal resources.
+    Dl_info dl_info;
+    if (dladdr((void*)metal_init, &dl_info) && dl_info.dli_fname) {
+        NSString* so_path = [NSString stringWithUTF8String:dl_info.dli_fname];
+        NSString* dir = [so_path stringByDeletingLastPathComponent];
+
+        // Prefer pre-compiled .metallib
+        NSString* metallib_path = [dir stringByAppendingPathComponent:@"bitnet_kernels.metallib"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:metallib_path]) {
+            g_library = [g_device newLibraryWithURL:[NSURL fileURLWithPath:metallib_path]
+                                              error:&error];
+        }
+
+        // Fall back to compiling from .metal source at runtime
+        if (g_library == nil) {
+            NSString* metal_path = [dir stringByAppendingPathComponent:@"bitnet_kernels.metal"];
+            if ([[NSFileManager defaultManager] fileExistsAtPath:metal_path]) {
+                NSString* source = [NSString stringWithContentsOfFile:metal_path
+                                                             encoding:NSUTF8StringEncoding
+                                                                error:&error];
+                if (source != nil) {
+                    g_library = [g_device newLibraryWithSource:source options:nil error:&error];
+                }
             }
         }
-    } else {
-        g_library = [g_device newLibraryWithURL:[NSURL fileURLWithPath:shaderPath] error:&error];
     }
-    
+
+    // Last-resort inline shader (uses 'bfloat' — the correct MSL type)
     if (g_library == nil) {
-        // Compile default shaders inline
         const char* defaultShaders = R"(
 #include <metal_stdlib>
 using namespace metal;
@@ -53,9 +67,9 @@ using namespace metal;
 kernel void bitlinear_int8xint2(
     device const int8_t* A [[buffer(0)]],
     device const uint8_t* B [[buffer(1)]],
-    device bfloat16_t* C [[buffer(2)]],
-    device const bfloat16_t* s [[buffer(3)]],
-    device const bfloat16_t* ws [[buffer(4)]],
+    device bfloat* C [[buffer(2)]],
+    device const bfloat* s [[buffer(3)]],
+    device const bfloat* ws [[buffer(4)]],
     constant int& M [[buffer(5)]],
     constant int& N [[buffer(6)]],
     constant int& K [[buffer(7)]],
@@ -63,128 +77,158 @@ kernel void bitlinear_int8xint2(
 ) {
     const int m_idx = tid.y;
     const int n_idx = tid.x;
-    
     if (m_idx >= M || n_idx >= N) return;
-    
     int32_t acc = 0;
-    const int k_blocks = (K + 15) / 16;
-    
-    for (int kb = 0; kb < k_blocks; kb++) {
-        int k_start = kb * 16;
-        int k_end = min(k_start + 16, K);
-        
-        for (int k = k_start; k < k_end; k++) {
-            uint8_t packed = B[n_idx * (K / 4) + k / 4];
-            int shift = (k % 4) * 2;
-            int8_t w = (int8_t)(((packed >> shift) & 0x03) - 1);
-            int8_t a = A[m_idx * K + k];
-            acc += (int32_t)a * (int32_t)w;
-        }
+    for (int k = 0; k < K; k++) {
+        uint8_t packed = B[n_idx * (K / 4) + k / 4];
+        int8_t w = (int8_t)(((packed >> ((k % 4) * 2)) & 0x03) - 1);
+        acc += (int32_t)A[m_idx * K + k] * (int32_t)w;
     }
-    
-    float result = (float)acc;
-    result = result / (float)s[m_idx] * (float)ws[n_idx];
-    C[m_idx * N + n_idx] = bfloat16_t(result);
+    float result = (float)acc / (float)s[m_idx] * (float)ws[n_idx];
+    C[m_idx * N + n_idx] = bfloat(result);
 }
 )";
         NSString* source = [NSString stringWithUTF8String:defaultShaders];
         g_library = [g_device newLibraryWithSource:source options:nil error:&error];
     }
-    
+
     if (g_library == nil) return false;
-    
-    // Create pipeline states
+
     id<MTLFunction> matmulFunction = [g_library newFunctionWithName:@"bitlinear_int8xint2"];
-    if (matmulFunction != nil) {
-        g_matmulPipeline = [g_device newComputePipelineStateWithFunction:matmulFunction error:&error];
-    }
-    
+    if (matmulFunction == nil) return false;
+
+    g_matmulPipeline = [g_device newComputePipelineStateWithFunction:matmulFunction error:&error];
     return g_device != nil && g_commandQueue != nil && g_matmulPipeline != nil;
 }
 
-// Execute matrix multiplication
-void metal_matmul(
+// ---------------------------------------------------------------------------
+// GPU-resident dispatch: callers pass raw Metal buffer pointers (as uintptr_t)
+// obtained from PyTorch MPS tensors via mps_storage_ptr().  No CPU copies.
+// ---------------------------------------------------------------------------
+void metal_matmul_buffers(
     int64_t M, int64_t N, int64_t K,
-    void* A_ptr,      // int8 [M, K]
-    void* B_ptr,      // uint8 packed [N, K/4]
-    void* C_ptr,      // bfloat16 [M, N]
-    void* s_ptr,      // bfloat16 [M]
-    void* ws_ptr      // bfloat16 [N]
+    uintptr_t A_mtl,   // id<MTLBuffer> cast to uintptr_t  — int8  [M, K]
+    uintptr_t B_mtl,   // id<MTLBuffer>                    — uint8 [N, K/4]
+    uintptr_t C_mtl,   // id<MTLBuffer>                    — bfloat [M, N]
+    uintptr_t s_mtl,   // id<MTLBuffer>                    — bfloat [M]
+    uintptr_t ws_mtl   // id<MTLBuffer>                    — bfloat [N]
 ) {
     if (!metal_init()) {
         throw std::runtime_error("Metal initialization failed");
     }
-    
+
+    id<MTLBuffer> A_buf  = (__bridge id<MTLBuffer>)(void*)A_mtl;
+    id<MTLBuffer> B_buf  = (__bridge id<MTLBuffer>)(void*)B_mtl;
+    id<MTLBuffer> C_buf  = (__bridge id<MTLBuffer>)(void*)C_mtl;
+    id<MTLBuffer> s_buf  = (__bridge id<MTLBuffer>)(void*)s_mtl;
+    id<MTLBuffer> ws_buf = (__bridge id<MTLBuffer>)(void*)ws_mtl;
+
     @autoreleasepool {
-        // Create command buffer and encoder
-        id<MTLCommandBuffer> commandBuffer = [g_commandQueue commandBuffer];
-        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
-        
-        // Set pipeline
+        id<MTLCommandBuffer>        cmd     = [g_commandQueue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
+
         [encoder setComputePipelineState:g_matmulPipeline];
-        
-        // Calculate buffer sizes
-        size_t A_size = M * K * sizeof(int8_t);
-        size_t B_size = N * (K / 4) * sizeof(uint8_t);
-        size_t C_size = M * N * sizeof(bfloat16_t);
-        size_t s_size = M * sizeof(bfloat16_t);
-        size_t ws_size = N * sizeof(bfloat16_t);
-        
-        // Create or reuse buffers (in production, use a buffer pool)
-        id<MTLBuffer> A_buffer = [g_device newBufferWithBytes:A_ptr length:A_size options:MTLResourceStorageModeShared];
-        id<MTLBuffer> B_buffer = [g_device newBufferWithBytes:B_ptr length:B_size options:MTLResourceStorageModeShared];
-        id<MTLBuffer> C_buffer = [g_device newBufferWithBytesNoCopy:C_ptr length:C_size options:MTLResourceStorageModeShared deallocator:nil];
-        id<MTLBuffer> s_buffer = [g_device newBufferWithBytes:s_ptr length:s_size options:MTLResourceStorageModeShared];
-        id<MTLBuffer> ws_buffer = [g_device newBufferWithBytes:ws_ptr length:ws_size options:MTLResourceStorageModeShared];
-        
-        // Set buffers
-        [encoder setBuffer:A_buffer offset:0 atIndex:0];
-        [encoder setBuffer:B_buffer offset:0 atIndex:1];
-        [encoder setBuffer:C_buffer offset:0 atIndex:2];
-        [encoder setBuffer:s_buffer offset:0 atIndex:3];
-        [encoder setBuffer:ws_buffer offset:0 atIndex:4];
-        
-        // Set constants
-        struct Constants {
-            int M, N, K;
-        } constants = {(int)M, (int)N, (int)K};
-        [encoder setBytes:&constants length:sizeof(constants) atIndex:5];
-        
-        // Dispatch threads with 256-thread configuration (32x8)
-        MTLSize gridSize = MTLSizeMake(N, M, 1);
-        MTLSize threadgroupSize = MTLSizeMake(32, 8, 1);  // 256 threads per group
-        
+
+        [encoder setBuffer:A_buf  offset:0 atIndex:0];
+        [encoder setBuffer:B_buf  offset:0 atIndex:1];
+        [encoder setBuffer:C_buf  offset:0 atIndex:2];
+        [encoder setBuffer:s_buf  offset:0 atIndex:3];
+        [encoder setBuffer:ws_buf offset:0 atIndex:4];
+
+        int M_i = (int)M, N_i = (int)N, K_i = (int)K;
+        [encoder setBytes:&M_i length:sizeof(int) atIndex:5];
+        [encoder setBytes:&N_i length:sizeof(int) atIndex:6];
+        [encoder setBytes:&K_i length:sizeof(int) atIndex:7];
+
+        MTLSize gridSize        = MTLSizeMake(N, M, 1);
+        MTLSize threadgroupSize = MTLSizeMake(32, 8, 1);
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
         [encoder endEncoding];
-        
-        // Commit and wait
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
+
+        [cmd commit];
+        [cmd waitUntilCompleted];
     }
 }
 
-// PyTorch binding
+// ---------------------------------------------------------------------------
+// CPU-copy fallback: safe for any tensor regardless of storage location.
+// ---------------------------------------------------------------------------
+void metal_matmul_copy(
+    int64_t M, int64_t N, int64_t K,
+    void* A_ptr, void* B_ptr, void* C_ptr, void* s_ptr, void* ws_ptr
+) {
+    if (!metal_init()) {
+        throw std::runtime_error("Metal initialization failed");
+    }
+
+    @autoreleasepool {
+        size_t A_sz  = M * K;
+        size_t B_sz  = N * (K / 4);
+        size_t C_sz  = M * N * 2;   // bfloat16 = 2 bytes
+        size_t s_sz  = M * 2;
+        size_t ws_sz = N * 2;
+
+        id<MTLBuffer> A_buf  = [g_device newBufferWithBytes:A_ptr  length:A_sz  options:MTLResourceStorageModeShared];
+        id<MTLBuffer> B_buf  = [g_device newBufferWithBytes:B_ptr  length:B_sz  options:MTLResourceStorageModeShared];
+        id<MTLBuffer> C_buf  = [g_device newBufferWithLength:C_sz              options:MTLResourceStorageModeShared];
+        id<MTLBuffer> s_buf  = [g_device newBufferWithBytes:s_ptr  length:s_sz  options:MTLResourceStorageModeShared];
+        id<MTLBuffer> ws_buf = [g_device newBufferWithBytes:ws_ptr length:ws_sz options:MTLResourceStorageModeShared];
+
+        id<MTLCommandBuffer>        cmd     = [g_commandQueue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
+
+        [encoder setComputePipelineState:g_matmulPipeline];
+        [encoder setBuffer:A_buf  offset:0 atIndex:0];
+        [encoder setBuffer:B_buf  offset:0 atIndex:1];
+        [encoder setBuffer:C_buf  offset:0 atIndex:2];
+        [encoder setBuffer:s_buf  offset:0 atIndex:3];
+        [encoder setBuffer:ws_buf offset:0 atIndex:4];
+
+        int M_i = (int)M, N_i = (int)N, K_i = (int)K;
+        [encoder setBytes:&M_i length:sizeof(int) atIndex:5];
+        [encoder setBytes:&N_i length:sizeof(int) atIndex:6];
+        [encoder setBytes:&K_i length:sizeof(int) atIndex:7];
+
+        MTLSize gridSize        = MTLSizeMake(N, M, 1);
+        MTLSize threadgroupSize = MTLSizeMake(32, 8, 1);
+        [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
+        [encoder endEncoding];
+
+        [cmd commit];
+        [cmd waitUntilCompleted];
+
+        memcpy(C_ptr, [C_buf contents], C_sz);
+    }
+}
+
+// Python-callable wrappers
 void bitlinear_metal(
     int64_t M, int64_t N, int64_t K,
-    uintptr_t A,
-    uintptr_t B,
-    uintptr_t C,
-    uintptr_t s,
-    uintptr_t ws
+    uintptr_t A, uintptr_t B, uintptr_t C, uintptr_t s, uintptr_t ws
 ) {
-    metal_matmul(M, N, K,
-        reinterpret_cast<void*>(A),
-        reinterpret_cast<void*>(B),
-        reinterpret_cast<void*>(C),
-        reinterpret_cast<void*>(s),
-        reinterpret_cast<void*>(ws)
-    );
+    metal_matmul_copy(M, N, K,
+        reinterpret_cast<void*>(A), reinterpret_cast<void*>(B),
+        reinterpret_cast<void*>(C), reinterpret_cast<void*>(s),
+        reinterpret_cast<void*>(ws));
+}
+
+void bitlinear_metal_mps(
+    int64_t M, int64_t N, int64_t K,
+    uintptr_t A_mtl, uintptr_t B_mtl, uintptr_t C_mtl,
+    uintptr_t s_mtl, uintptr_t ws_mtl
+) {
+    metal_matmul_buffers(M, N, K, A_mtl, B_mtl, C_mtl, s_mtl, ws_mtl);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("bitlinear_metal", &bitlinear_metal, "BitNet linear layer on Metal",
-        py::arg("M"), py::arg("N"), py::arg("K"),
-        py::arg("A"), py::arg("B"), py::arg("C"),
-        py::arg("s"), py::arg("ws"));
-    m.def("metal_init", &metal_init, "Initialize Metal device");
+    m.def("bitlinear_metal", &bitlinear_metal,
+          "BitNet linear (CPU-copy path — safe with any tensor storage)",
+          py::arg("M"), py::arg("N"), py::arg("K"),
+          py::arg("A"), py::arg("B"), py::arg("C"), py::arg("s"), py::arg("ws"));
+    m.def("bitlinear_metal_mps", &bitlinear_metal_mps,
+          "BitNet linear (GPU-resident path — pass raw MTLBuffer handles)",
+          py::arg("M"), py::arg("N"), py::arg("K"),
+          py::arg("A_mtl"), py::arg("B_mtl"), py::arg("C_mtl"),
+          py::arg("s_mtl"), py::arg("ws_mtl"));
+    m.def("metal_init", &metal_init, "Initialize Metal device and pipeline");
 }
