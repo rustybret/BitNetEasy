@@ -18,46 +18,53 @@ except ImportError:
     print("Warning: Metal extension not available. Falling back to MPS or CPU.")
 
 
+def _expand_ws(ws, N):
+    """Expand weight scale from [4] to [N] cyclically as the kernel expects."""
+    if ws.numel() == N:
+        return ws.contiguous()
+    return ws[torch.arange(N, device=ws.device) % ws.numel()].contiguous()
+
+
 def bitnet_int8xint2_linear_metal(input0, input1, s, ws):
     """
-    Metal-accelerated int8 x int2 linear layer.
+    Custom Metal int8×int2 matrix multiply.
 
-    Args:
-        input0: int8 tensor [M, K] - quantized input activations
-        input1: int8 tensor [N, K/4] - packed 2-bit weights
-        s: bfloat16 tensor [1] - input scale
-        ws: bfloat16 tensor [4] - weight scales
-
-    Returns:
-        bfloat16 tensor [M, N] - output
+    Tensors are staged to CPU-accessible memory before dispatching the kernel
+    (newBufferWithBytes copies into Metal shared memory) and the result is
+    moved back to the original device.  On Apple Silicon UMA this transfer is
+    fast.  A GPU-resident zero-copy path would require access to the raw
+    MTLBuffer backing each PyTorch MPS tensor, which is not exposed through
+    the public Python API; that optimisation is deferred.
     """
     if not METAL_AVAILABLE:
         raise RuntimeError("Metal extension not available")
 
+    dev = input0.device
     out_shape = list(input0.shape)
-    out_shape[-1] = input1.shape[0]
+    N = input1.shape[0]
+    out_shape[-1] = N
 
     M = input0.shape[0]
     if len(out_shape) == 3:
         M *= input0.shape[1]
-    N = input1.shape[0]
     K = input1.shape[1] * 4
 
-    ret = torch.zeros(*out_shape, dtype=torch.bfloat16, device=input0.device)
+    a_cpu  = input0.cpu().contiguous()
+    b_cpu  = input1.cpu().contiguous()
+    # s may be [M,1] (keepdim from quant_input) — flatten to [M]
+    s_cpu  = s.reshape(-1).cpu().contiguous().to(torch.bfloat16)
+    # weight_scale is [4]; expand cyclically to [N] as the kernel expects ws[n]
+    ws_cpu = _expand_ws(ws.cpu().to(torch.bfloat16), N)
 
-    # Call Metal kernel
+    ret = torch.zeros(M, N, dtype=torch.bfloat16).contiguous()
+
     bitnet_metal.bitlinear_metal(
-        M,
-        N,
-        K,
-        input0.data_ptr(),
-        input1.data_ptr(),
-        ret.data_ptr(),
-        s.data_ptr(),
-        ws.data_ptr(),
+        M, N, K,
+        a_cpu.data_ptr(), b_cpu.data_ptr(), ret.data_ptr(),
+        s_cpu.data_ptr(), ws_cpu.data_ptr(),
     )
 
-    return ret
+    return ret.reshape(out_shape).to(dev)
 
 
 def bitnet_int8xint2_linear_mps(input0, input1, s, ws):
