@@ -38,9 +38,9 @@ inline void decode_i2s_to_i8s_16(uint32_t i2s, thread int8_t* i8s) {
 kernel void bitlinear_int8xint2(
     device const int8_t* A [[buffer(0)]],           // [M, K]
     device const uint8_t* B [[buffer(1)]],            // [N, K/4] packed
-    device bfloat16_t* C [[buffer(2)]],               // [M, N]
-    device const bfloat16_t* s [[buffer(3)]],         // [M] input scales
-    device const bfloat16_t* ws [[buffer(4)]],        // [N] weight scales  
+    device bfloat* C [[buffer(2)]],                   // [M, N]
+    device const bfloat* s [[buffer(3)]],             // [M] input scales
+    device const bfloat* ws [[buffer(4)]],            // [N] weight scales
     constant int& M [[buffer(5)]],
     constant int& N [[buffer(6)]],
     constant int& K [[buffer(7)]],
@@ -99,8 +99,8 @@ kernel void bitlinear_int8xint2(
     // C[m, n] = acc / s[m] * ws[n]
     float result = (float)acc;
     result = result / (float)s[m_idx] * (float)ws[n_idx];
-    
-    C[m_idx * N + n_idx] = bfloat16_t(result);
+
+    C[m_idx * N + n_idx] = bfloat(result);
 }
 
 // Optimized version using SIMD groups for reduction
@@ -108,9 +108,9 @@ kernel void bitlinear_int8xint2(
 kernel void bitlinear_int8xint2_simd(
     device const int8_t* A [[buffer(0)]],           // [M, K]
     device const uint8_t* B [[buffer(1)]],            // [N, K/4] packed
-    device bfloat16_t* C [[buffer(2)]],               // [M, N]
-    device const bfloat16_t* s [[buffer(3)]],         // [M] input scales
-    device const bfloat16_t* ws [[buffer(4)]],        // [N] weight scales
+    device bfloat* C [[buffer(2)]],                   // [M, N]
+    device const bfloat* s [[buffer(3)]],             // [M] input scales
+    device const bfloat* ws [[buffer(4)]],            // [N] weight scales
     constant int& M [[buffer(5)]],
     constant int& N [[buffer(6)]],
     constant int& K [[buffer(7)]],
@@ -178,14 +178,14 @@ kernel void bitlinear_int8xint2_simd(
     // Apply scales and write
     float result = (float)acc;
     result = result / (float)s[m_idx] * (float)ws[n_idx];
-    C[m_idx * N + n_idx] = bfloat16_t(result);
+    C[m_idx * N + n_idx] = bfloat(result);
 }
 
 // Input quantization kernel: FP16/BF16 -> INT8 with per-row scaling
 kernel void quantize_input(
-    device const bfloat16_t* input [[buffer(0)]],     // [M, K]
+    device const bfloat* input [[buffer(0)]],          // [M, K]
     device int8_t* output [[buffer(1)]],               // [M, K]
-    device bfloat16_t* scales [[buffer(2)]],           // [M]
+    device bfloat* scales [[buffer(2)]],               // [M]
     constant int& M [[buffer(3)]],
     constant int& K [[buffer(4)]],
     uint2 tid [[thread_position_in_grid]]
@@ -205,7 +205,7 @@ kernel void quantize_input(
             max_val = fmax(max_val, val);
         }
         row_max[0] = max_val;
-        scales[m_idx] = bfloat16_t(127.0f / fmax(max_val, 1e-5f));
+        scales[m_idx] = bfloat(127.0f / fmax(max_val, 1e-5f));
     }
     
     threadgroup_barrier(mem_flags::mem_threadgroup);
