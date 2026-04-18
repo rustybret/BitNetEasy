@@ -22,7 +22,6 @@ A demo of bitnet.cpp running a BitNet b1.58 3B model on Apple M2:
 https://github.com/user-attachments/assets/7f46b736-edec-4828-b809-4be780a3e5b1
 
 ## What's New:
-- 04/03/2026 [BitNet Metal Backend for Apple Silicon](https://github.com/microsoft/BitNet/blob/main/gpu/metal_kernels/README.md) - Up to 24x speedup on Apple Silicon with optimized Metal kernels ![NEW](https://img.shields.io/badge/NEW-red)
 - 01/15/2026 [BitNet CPU Inference Optimization](https://github.com/microsoft/BitNet/blob/main/src/README.md) ![NEW](https://img.shields.io/badge/NEW-red)
 - 05/20/2025 [BitNet Official GPU inference kernel](https://github.com/microsoft/BitNet/blob/main/gpu/README.md)
 - 04/14/2025 [BitNet Official 2B Parameter Model on Hugging Face](https://huggingface.co/microsoft/BitNet-b1.58-2B-4T)
@@ -59,7 +58,7 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
         <td>&#9989;</td>
         <td>&#10060;</td>
         <td>&#9989;</td>
-        <td rowspan="2"><a href="./gpu/README.md">CUDA</a>, <a href="./gpu/metal_kernels/README.md">Metal</a></td>
+        <td rowspan="2"><a href="./gpu/README.md">CUDA</a></td>
     </tr>
     <tr>
         <td>ARM</td>
@@ -93,7 +92,7 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
         <td>&#9989;</td>
         <td>&#10060;</td>
         <td>&#9989;</td>
-        <td rowspan="2"><a href="./gpu/metal_kernels/README.md">Metal</a></td>
+        <td rowspan="2">&mdash;</td>
     </tr>
     <tr>
         <td>ARM</td>
@@ -108,7 +107,7 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
         <td>&#10060;</td>
         <td>&#10060;</td>
         <td>&#9989;</td>
-        <td rowspan="2"><a href="./gpu/README.md">CUDA</a>, <a href="./gpu/metal_kernels/README.md">Metal</a></td>
+        <td rowspan="2"><a href="./gpu/README.md">CUDA</a></td>
     </tr>
     <tr>
         <td>ARM</td>
@@ -123,7 +122,7 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
         <td>&#9989;</td>
         <td>&#10060;</td>
         <td>&#9989;</td>
-        <td rowspan="2"><a href="./gpu/README.md">CUDA</a>, <a href="./gpu/metal_kernels/README.md">Metal</a></td>
+        <td rowspan="2"><a href="./gpu/README.md">CUDA</a></td>
     </tr>
     <tr>
         <td>ARM</td>
@@ -138,7 +137,7 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
         <td>&#9989;</td>
         <td>&#10060;</td>
         <td>&#9989;</td>
-        <td rowspan="2"><a href="./gpu/README.md">CUDA</a>, <a href="./gpu/metal_kernels/README.md">Metal</a></td>
+        <td rowspan="2"><a href="./gpu/README.md">CUDA</a></td>
     </tr>
     <tr>
         <td>ARM</td>
@@ -153,7 +152,7 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
 <td>&#9989;</td>
 <td>&#10060;</td>
 <td>&#9989;</td>
-<td rowspan="2"><a href="./gpu/metal_kernels/README.md">Metal</a></td>
+<td rowspan="2">&mdash;</td>
 </tr>
 <tr>
 <td>ARM</td>
@@ -168,7 +167,7 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
 <td>&#9989;</td>
 <td>&#10060;</td>
 <td>&#9989;</td>
-<td rowspan="2"><a href="./gpu/README.md">CUDA</a>, <a href="./gpu/metal_kernels/README.md">Metal</a></td>
+<td rowspan="2"><a href="./gpu/README.md">CUDA</a></td>
 </tr>
 <tr>
 <td>ARM</td>
@@ -183,7 +182,7 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
 <td>&#9989;</td>
 <td>&#10060;</td>
 <td>&#9989;</td>
-<td rowspan="2"><a href="./gpu/README.md">CUDA</a>, <a href="./gpu/metal_kernels/README.md">Metal</a></td>
+<td rowspan="2"><a href="./gpu/README.md">CUDA</a></td>
 </tr>
 <tr>
 <td>ARM</td>

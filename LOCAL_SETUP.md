@@ -88,6 +88,20 @@ After the download, the helper can target it with `--model falcon3`.
 
 Homebrew LLVM 18 failed against the current macOS SDK headers during compilation. The successful build on this machine used Apple clang instead.
 
+If `setup_env.py` appears to hang for hours on M-series hardware, pass `CFLAGS="-mllvm -disable-interleaved-load-combine"` / `CXXFLAGS="-mllvm -disable-interleaved-load-combine"` to the build. LLVM's `InterleavedLoadCombine` pass enters infinite recursion on Apple Silicon against BitNet's vector shuffle patterns. This is tracked in upstream PR #403 and issues #251, #260, #294. The flag is Darwin+arm64 only.
+
+## Apple Silicon GPU acceleration
+
+There is nothing separate to build for GPU on macOS — `llama.cpp` already uses Metal automatically on Darwin (`GGML_METAL=1` is set by default on M-series in `3rdparty/llama.cpp/Makefile`). The `run_inference.py` / `llama-cli` path described above is the Metal path.
+
+Do **not** use anything under `gpu/` — that directory is the CUDA PyTorch-native inference path and is NVIDIA-only. A custom `gpu/metal_kernels/` directory previously existed in this fork (from upstream PR #528). It was removed because:
+
+- The custom int8×int2 Metal kernel was measurably slower than `torch.matmul` on MPS in every configuration (3× vs CPU custom kernel vs 24× vs CPU for MPS on M2 Max at batch=128).
+- The performance ceiling is structural: PyTorch's Python API does not expose the raw `MTLBuffer` backing MPS tensors, forcing a CPU-stage copy on every call; Apple Silicon has no public int8 SIMD dot instruction (no `dp4a` equivalent); MPS uses MPSGraph which has access to hardware paths public Metal does not.
+- The "SIMD" variant of the kernel in the upstream PR was defined but never bound by the dispatch code and had an indexing bug that would have written only row 0 of each 8-row tile.
+
+If you need PyTorch-native inference on Apple Silicon (as opposed to `llama.cpp` / GGUF), use MPS directly — just move tensors to `mps` and call standard `torch.matmul`.
+
 ## Runtime note
 
 Warnings like these are noisy, but they are not the reason the helper appeared to stall:
