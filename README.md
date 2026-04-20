@@ -1,35 +1,45 @@
-# bitnet.cpp - Apple Silicon Fork
+# bitnet.cpp - Dual Engine 1-bit LLM Inference
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-![version](https://img.shields.io/badge/version-1.0-blue)
+![version](https://img.shields.io/badge/version-2.0-blue)
 ![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-brightgreen)
 
-> **This fork is optimized for macOS and Apple Silicon (M1/M2/M3/M4) with enhanced Metal GPU support.**
+> **Dual-engine 1-bit LLM inference supporting both I2_S (BitNet) and Q1_0 (Bonsai) formats on Apple Silicon.**
 
-This repository is a fork of the official [Microsoft BitNet](https://github.com/microsoft/BitNet) implementation, with specific optimizations and documentation for macOS users. It provides fast, lossless inference of 1.58-bit quantized LLMs using Apple Silicon's Metal Performance Shaders (MPS).
+This repository provides **two parallel inference engines** for 1-bit LLMs on Apple Silicon:
 
-## Why This Fork
+1. **ggml-org Engine** - Upstream llama.cpp with Q1_0 Metal support (Bonsai models)
+2. **BitNet Engine** - Microsoft's optimized fork with I2_S support (BitNet models)
 
-This fork adds:
-- **Enhanced Apple Silicon documentation** with macOS-specific setup instructions
-- **Metal GPU benchmarks** showing 13x performance improvement over CPU-only
-- **Simplified helper scripts** (`run_bitnet_2b.sh`) with automatic model downloads
-- **macOS-specific build notes** and troubleshooting
-- **Expanded model support** tested on Apple Silicon
+## Why Dual Engines?
 
-## Performance: Metal vs CPU
+| Feature | ggml-org (Q1_0) | BitNet (I2_S) |
+|---------|-----------------|---------------|
+| **Models** | Bonsai 1.7B/4B/8B | BitNet 2B/3B, Falcon3 |
+| **Model Size** | 231-540 MiB | 1.7-3.0 GiB |
+| **Prompt Speed** | 960-2,534 t/s | 490-1,455 t/s |
+| **Token Speed** | 122-208 t/s | 65-68 t/s |
+| **Memory Efficiency** | ~7x smaller | Larger but mature |
 
-Benchmark results on Apple M2 Max:
+**Recommendation**: Use **Bonsai Q1_0** for best performance/size ratio, **I2_S** for existing BitNet models.
 
-| Configuration | GPU Layers | Prompt Processing | Text Generation | Speedup |
-|--------------|-----------|-------------------|-----------------|---------|
-| **Metal GPU (Full)** | 31 | **1,264 t/s** | 70.6 t/s | **13.2x** |
-| **Metal GPU (Partial)** | 20 | 309.6 t/s | 69.3 t/s | 4.0x |
-| **CPU-Only** | 0 | 77.5 t/s | 72.2 t/s | 1.0x |
+## Performance Comparison
 
-**Key Insight:** Metal GPU acceleration provides massive benefits for **prompt processing** (13x faster), while text generation performance is similar between CPU and GPU. Use `-ngl 31` (all layers) for best performance with long prompts.
+### Bonsai Q1_0 (ggml-org Engine)
 
-> **Note:** Unlike NVIDIA CUDA, no separate build is needed for Metal. The `llama.cpp` backend automatically enables Metal on Apple Silicon.
+| Model | Size | pp512 (t/s) | tg64 (t/s) |
+|-------|------|-------------|------------|
+| Bonsai-1.7B | 231 MiB | **2,534** | **208** |
+| Bonsai-4B | 540 MiB | **1,040** | **122** |
+
+### BitNet I2_S (BitNet Engine)
+
+| Model | Size | pp512 (t/s) | tg64 (t/s) |
+|-------|------|-------------|------------|
+| BitNet-2B | 1.71 GiB | **1,455** | **68** |
+| Falcon3-7B | 3.05 GiB | **537** | **65** |
+
+**Key Insight**: Q1_0 Bonsai models are **2-3x faster** for token generation while being **5-7x smaller**.
 
 ## Quick Start (macOS)
 
@@ -38,11 +48,12 @@ Benchmark results on Apple M2 Max:
 - macOS 12+ (Monterey or later)
 - Apple Silicon Mac (M1/M2/M3/M4)
 - Homebrew: `cmake` >= 4.3.1, Python >= 3.11
-- Apple Clang (LLVM 18 has known issues)
+
+### Option 1: Q1_0 Models (Bonsai)
 
 ```bash
 # Clone the repository
-git clone --recursive https://github.com/microsoft/BitNet.git
+git clone --recursive https://github.com/your-repo/BitNet.git
 cd BitNet
 
 # Create Python virtual environment
@@ -50,48 +61,52 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Download and setup model
-hf download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir models/BitNet-b1.58-2B-4T
-python setup_env.py -md models/BitNet-b1.58-2B-4T -q i2_s
+# Build ggml-org engine (Q1_0 support)
+cmake -B build -DGGML_METAL=ON
+cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+
+# Download Bonsai model
+source .venv/bin/activate
+python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='prism-ml/Bonsai-1.7B-gguf', local_dir='models/Bonsai-1.7B', allow_patterns='*.gguf')"
+
+# Run inference
+/tmp/llama-build/bin/llama-cli -m models/Bonsai-1.7B/Bonsai-1.7B-Q1_0.gguf -p "Hello" -ngl 99
 ```
 
-### Run Inference
+### Option 2: I2_S Models (BitNet)
 
 ```bash
-# Quick one-shot inference (recommended)
-./run_bitnet_2b.sh "You are a helpful assistant"
+# Build BitNet engine
+cd 3rdparty/bitnet-official
+python setup_env.py -md ../../models/BitNet-b1.58-2B-4T -q i2_s
 
-# With specific model
-./run_bitnet_2b.sh --model falcon3 "What is machine learning?"
-
-# Interactive chat mode
-./run_bitnet_2b.sh --chat "You are a coding assistant"
-
-# Direct Python wrapper (more options)
+# Run inference
 python run_inference.py -m models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf -p "You are a helpful assistant" -cnv
 ```
 
 ### Run Benchmarks
 
 ```bash
-# Quick benchmark
-python utils/e2e_benchmark.py -m models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf -n 64 -p 128 -t 8
-
-# Comprehensive comparison (CPU vs Metal)
-./build/bin/llama-bench -m models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf -ngl 0,31 -p 128 -n 64 -t 8
+# Dual engine benchmark script
+./benchmark_dual_engines.sh
 ```
 
 ## Supported Models
 
-This fork includes expanded model support tested specifically on Apple Silicon:
+### Q1_0 Models (Bonsai - ggml-org Engine)
 
-| Model | Parameters | Apple Silicon | Metal GPU | Notes |
-|-------|-----------|---------------|-----------|-------|
-| [BitNet-b1.58-2B-4T](https://huggingface.co/microsoft/BitNet-b1.58-2B-4T) | 2.4B | ✅ | ✅ | **Recommended default** |
-| [bitnet_b1_58-3B](https://huggingface.co/1bitLLM/bitnet_b1_58-3B) | 3.3B | ✅ | ✅ | Larger model |
-| [Falcon3-7B-Instruct](https://huggingface.co/tiiuae/Falcon3-7B-Instruct-1.58bit) | 7.0B | ✅ | ✅ | Use GGUF version |
-| [Llama3-8B-1.58](https://huggingface.co/HF1BitLLM/Llama3-8B-1.58-100B-tokens) | 8.0B | ✅ | ✅ | 100B tokens |
-| [Falcon3 Family](https://huggingface.co/collections/tiiuae/falcon3-67605ae03578be86e4e87026) | 1B-10B | ✅ | ✅ | Multiple sizes |
+| Model | Parameters | Size | Metal GPU | Notes |
+|-------|------------|------|-----------|-------|
+| [Bonsai-1.7B](https://huggingface.co/prism-ml/Bonsai-1.7B-gguf) | 1.72B | 231 MiB | ✅ | **Fastest, fits in cache** |
+| [Bonsai-4B](https://huggingface.co/prism-ml/Bonsai-4B-gguf) | 4.02B | 540 MiB | ✅ | Good balance |
+| [Bonsai-8B](https://huggingface.co/prism-ml/Bonsai-8B-gguf) | 8.19B | 1.07 GiB | ✅ | Maximum quality |
+
+### I2_S Models (BitNet - BitNet Engine)
+
+| Model | Parameters | Size | Metal GPU | Notes |
+|-------|------------|------|-----------|-------|
+| [BitNet-b1.58-2B-4T](https://huggingface.co/microsoft/BitNet-b1.58-2B-4T) | 2.4B | 1.71 GiB | ✅ | Original BitNet |
+| [Falcon3-7B-1.58bit](https://huggingface.co/tiiuae/Falcon3-7B-Instruct-1.58bit) | 7.0B | 3.05 GiB | ✅ | Larger model |
 
 **Download Falcon3 (GGUF):**
 ```bash

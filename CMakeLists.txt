@@ -1,19 +1,24 @@
-cmake_minimum_required(VERSION 3.14)  # for add_link_options and implicit target directories.
+cmake_minimum_required(VERSION 3.14) # for add_link_options and implicit target directories.
 project("bitnet.cpp" C CXX)
 include(CheckIncludeFileCXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if (NOT XCODE AND NOT MSVC AND NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
-    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
+# Dual engine output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(LLAMA_GGML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/bin-ggml)
+set(LLAMA_BITNET_OUTPUT_DIR ${CMAKE_BINARY_DIR}/bin-bitnet)
 
 # option list
-option(BITNET_ARM_TL1    "bitnet.cpp: use tl1 on arm platform"    OFF)
-option(BITNET_X86_TL2    "bitnet.cpp: use tl2 on x86 platform"    OFF)
+option(BITNET_ARM_TL1 "bitnet.cpp: use tl1 on arm platform" OFF)
+option(BITNET_X86_TL2 "bitnet.cpp: use tl2 on x86 platform" OFF)
+option(BUILD_GGML_ENGINE "Build ggml-org/llama.cpp engine (Q1_0 support)" ON)
+option(BUILD_BITNET_ENGINE "Build Microsoft BitNet engine (I2_S support)" ON)
 
 
 set(CMAKE_CXX_STANDARD_REQUIRED true)
@@ -22,25 +27,34 @@ set(CMAKE_C_STANDARD_REQUIRED true)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
 # override ggml options
-set(GGML_BITNET_ARM_TL1    ${BITNET_ARM_TL1})
-set(GGML_BITNET_X86_TL2    ${BITNET_X86_TL2})
+set(GGML_BITNET_ARM_TL1 ${BITNET_ARM_TL1})
+set(GGML_BITNET_X86_TL2 ${BITNET_X86_TL2})
 
 if (GGML_BITNET_ARM_TL1)
-    add_compile_definitions(GGML_BITNET_ARM_TL1)
+add_compile_definitions(GGML_BITNET_ARM_TL1)
 endif()
 if (GGML_BITNET_X86_TL2)
-    add_compile_definitions(GGML_BITNET_X86_TL2)
+add_compile_definitions(GGML_BITNET_X86_TL2)
 endif()
 
 if (CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    add_compile_options(-fpermissive)
+add_compile_options(-fpermissive)
 endif()
 
 find_package(Threads REQUIRED)
 
+# Build BitNet custom kernels (for I2_S support)
 add_subdirectory(src)
+
+# Build ggml-org llama.cpp (upstream, Q1_0 support)
+if (BUILD_GGML_ENGINE)
+message(STATUS "Building ggml-org llama.cpp engine (Q1_0 Metal support)")
 set(LLAMA_BUILD_SERVER ON CACHE BOOL "Build llama.cpp server" FORCE)
 add_subdirectory(3rdparty/llama.cpp)
+endif()
+
+# Note: Microsoft BitNet official repo has its own build system
+# Build separately with: cd 3rdparty/bitnet-official && python setup_env.py
 
 # install
 
